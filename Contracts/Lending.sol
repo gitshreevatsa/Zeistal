@@ -15,7 +15,7 @@ interface IUniswap {
 
 contract LendingPool {
     address public usdcToken;
-    address public wethToken;
+    address public wbtctoken;
     address public uniswapRouter;
     uint256 public poolBalance;
     uint256 public exchangeRate; // USDC per WETH
@@ -42,11 +42,11 @@ contract LendingPool {
 
     constructor(
         address _usdcToken,
-        address _wethToken,
+        address _wbtctoken,
         address _uniswapRouter
     ) {
         usdcToken = _usdcToken;
-        wethToken = _wethToken;
+        wbtctoken = _wbtctoken;
         uniswapRouter = _uniswapRouter;
     }
 
@@ -63,7 +63,7 @@ contract LendingPool {
         require(poolBalance >= (amount * 80) / 100, "Not enough liquidity");
 
         // Store the USDC to WETH exchange rate when loan is opened
-        exchangeRate = getExchangeRate(); // Fetch the current rate (assume a function for this)
+        exchangeRate = 5*amount; // As 20% of the loan amount is bought by borrower and protocol supports only 1BTC trades ATM
 
         Loan storage loan = loans[loanCount];
         loan.amount = amount;
@@ -145,7 +145,7 @@ contract LendingPool {
 
         address[] memory path;
         path[0] = usdcToken;
-        path[1] = wethToken;
+        path[1] = wbtctoken;
 
         IUniswap(uniswapRouter).swapExactTokensForTokens(
             amount,
@@ -165,8 +165,5 @@ contract LendingPool {
         // Implementation to return all lenders with non-zero deposits
     }
 
-    // Mock exchange rate fetcher for demonstration
-    function getExchangeRate() internal pure returns (uint256) {
-        return 2000 * 10 ** 6; // 2000 USDC per WETH (example rate, replace with actual implementation)
-    }
+
 }
