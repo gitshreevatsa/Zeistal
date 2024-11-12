@@ -1,170 +1,172 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.0;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
-interface IRouter {
+interface IUniswap {
     function swapExactTokensForTokens(
-        uint amountIn,
-        uint amountOutMin,
+        uint256 amountIn,
+        uint256 amountOutMin,
         address[] calldata path,
         address to,
-        uint deadline
-    ) external returns (uint[] memory amounts);
-
-    function swapExactETHForTokens(
-        uint amountOutMin,
-        address[] calldata path,
-        address to,
-        uint deadline
-    ) external payable returns (uint[] memory amounts);
-
-    function swapExactTokensForETH(
-        uint amountIn,
-        uint amountOutMin,
-        address[] calldata path,
-        address to,
-        uint deadline
-    ) external returns (uint[] memory amounts);
+        uint256 deadline
+    ) external returns (uint256[] memory amounts);
 }
 
-contract Lending {
-    address public token;
-    address public owner;
-    address public router;
+contract LendingPool {
+    address public usdcToken;
+    address public wethToken;
+    address public uniswapRouter;
+    uint256 public poolBalance;
+    uint256 public exchangeRate; // USDC per WETH
 
-    constructor(address _token, address _router) {
-        token = _token;
-        owner = msg.sender;
-        router = _router;
+    struct Lender {
+        uint256 deposit;
+        uint256 totalContributed;
+        uint256 wethEquivalent; // WETH amount they’re entitled to receive
     }
 
     struct Loan {
-        bytes32 loanid;
+        uint256 amount;
+        uint256 collateral;
+        address borrower;
         address[] lenders;
         uint256[] amounts;
-        uint256 total_amount;
-        uint256 duration;
-        uint256 start_date;
-        uint256 end_date;
-        uint256 monthsNotPaid;
-        uint256 upFrontPayment;
-        bool active;
-        bool slashed;
-        Payment[] payments;
+        uint256 remainingCollateral;
+        bool isActive;
     }
 
-    struct Payment {
-        bytes32 paymentId;
-        bytes32 loanId;
-        address[] userAddress;
-        uint256[] amounts;
+    mapping(address => Lender) public lenders;
+    mapping(uint256 => Loan) public loans;
+    uint256 public loanCount;
+
+    constructor(
+        address _usdcToken,
+        address _wethToken,
+        address _uniswapRouter
+    ) {
+        usdcToken = _usdcToken;
+        wethToken = _wethToken;
+        uniswapRouter = _uniswapRouter;
     }
 
-    mapping(bytes32 => Loan) public loans;
-    mapping(bytes32 => Payment) public payments;
-
-    modifier onlyOwner() {
-        require(msg.sender == owner, "Only owner can call this function");
-        _;
+    // Deposit function for lenders
+    function deposit(uint256 amount) external {
+        // Assume approval has been given by the lender
+        ERC20(usdcToken).transferFrom(msg.sender, address(this), amount);
+        lenders[msg.sender].deposit += amount;
+        poolBalance += amount;
     }
 
-    function loan(
-        bytes32 loanid,
-        address[] memory lenders,
-        uint256[] memory amounts,
-        uint256 total_amount,
-        uint256 duration,
-        uint256 start_date,
-        uint256 end_date,
-        uint256 monthsNotPaid,
-        uint256 upFrontPayment
-    ) public {
-        Loan storage loanDetails = loans[loanid];
-        loanDetails.loanid = loanid;
-        loanDetails.lenders = lenders;
-        loanDetails.amounts = amounts;
-        loanDetails.total_amount = total_amount;
-        loanDetails.duration = duration;
-        loanDetails.start_date = start_date;
-        loanDetails.end_date = end_date;
-        loanDetails.monthsNotPaid = monthsNotPaid;
-        loanDetails.active = true;
-        loanDetails.slashed = false;
-        loanDetails.upFrontPayment = upFrontPayment;
+    // Open a new loan with USDC collateral
+    function openLoan(uint256 amount, uint256 collateral) external {
+        require(poolBalance >= (amount * 80) / 100, "Not enough liquidity");
 
-        // Loop for transferring tokens from lenders to contract
-        for (uint256 i = 0; i < lenders.length; i++) {
-            ERC20(token).transferFrom(lenders[i], address(this), amounts[i]);
+        // Store the USDC to WETH exchange rate when loan is opened
+        exchangeRate = getExchangeRate(); // Fetch the current rate (assume a function for this)
+
+        Loan storage loan = loans[loanCount];
+        loan.amount = amount;
+        loan.collateral = collateral;
+        loan.remainingCollateral = collateral;
+        loan.borrower = msg.sender;
+        loan.isActive = true;
+
+        // Allocate lenders to this loan
+        allocateLendersToLoan(loanCount, amount);
+
+        // Swap 80% of the loan amount (in USDC) for WETH and send to borrower
+        uint256 usdcToSwap = (amount * 80) / 100;
+        swapUSDCForWETH(usdcToSwap, msg.sender);
+
+        loanCount++;
+    }
+
+    // Allocate funds from lenders to the loan
+    function allocateLendersToLoan(uint256 loanId, uint256 amount) internal {
+        Loan storage loan = loans[loanId];
+        uint256 totalAllocated = 0;
+        address[] memory lenderAddresses = getLendersWithContribution();
+
+        for (uint256 i = 0; i < lenderAddresses.length; i++) {
+            address lenderAddr = lenderAddresses[i];
+            Lender storage lender = lenders[lenderAddr];
+            uint256 contribution = (amount * lender.deposit) / poolBalance;
+
+            if (totalAllocated + contribution > amount) {
+                contribution = amount - totalAllocated;
+            }
+
+            lender.deposit -= contribution;
+            lender.totalContributed += contribution;
+
+            // Calculate WETH equivalent for lender’s contribution
+            uint256 wethEquivalent = (contribution * 1 ether) / exchangeRate;
+            lender.wethEquivalent += wethEquivalent;
+
+            loan.lenders.push(lenderAddr);
+            loan.amounts.push(contribution);
+
+            totalAllocated += contribution;
+            if (totalAllocated >= amount) break;
         }
 
-        // Path for swapping tokens (static values here, should be parameterized)
-        address[] memory path;
-        path[0] = 0xb669dC8cC6D044307Ba45366C0c836eC3c7e31AA;
-        path[1] = 0x8d0c9d1c17aE5e40ffF9bE350f57840E9E66Cd93;
+        poolBalance -= totalAllocated;
+    }
 
-        // Perform swap
-        IRouter(router).swapExactTokensForETH(
-            loanDetails.total_amount,
-            1, // Minimum amount of ETH to receive
+    // Process a payment towards a loan
+    function processPayment(uint256 loanId, uint256 amount) external {
+        Loan storage loan = loans[loanId];
+        require(loan.isActive, "Loan is not active");
+
+        ERC20(usdcToken).transferFrom(msg.sender, address(this), amount);
+
+        // Distribute payment to lenders
+        for (uint256 i = 0; i < loan.lenders.length; i++) {
+            address lenderAddr = loan.lenders[i];
+            uint256 lenderContribution = loan.amounts[i];
+            uint256 lenderShare = (amount * lenderContribution) / loan.amount;
+
+            lenders[lenderAddr].deposit += lenderShare;
+        }
+
+        // Reduce the loan's remaining collateral as payment is made
+        loan.remainingCollateral -= (loan.collateral * amount) / loan.amount;
+
+        // If loan is fully paid, deactivate it
+        if (loan.remainingCollateral == 0) {
+            loan.isActive = false;
+        }
+    }
+
+    // Swap function (USDC -> WETH) via Uniswap
+    function swapUSDCForWETH(uint256 amount, address to) internal {
+        ERC20(usdcToken).approve(uniswapRouter, amount);
+
+        address[] memory path;
+        path[0] = usdcToken;
+        path[1] = wethToken;
+
+        IUniswap(uniswapRouter).swapExactTokensForTokens(
+            amount,
+            1, // Min amount out, could use slippage tolerance
             path,
-            address(this),
-            block.timestamp + 10
+            to,
+            block.timestamp
         );
     }
 
-    function payment(
-        bytes32 paymentId,
-        bytes32 loanId,
-        address[] memory userAddress,
-        uint256[] memory amounts
-    ) public {
-        Payment memory paymentDetails;
-        paymentDetails.paymentId = paymentId;
-        paymentDetails.loanId = loanId;
-        paymentDetails.userAddress = userAddress;
-        paymentDetails.amounts = amounts;
-
-        // Store the payment details
-        Loan storage loanDetails = loans[loanId];
-        loanDetails.payments.push(paymentDetails);
-        payments[paymentId] = paymentDetails;
-
-        // Transfer amounts to users
-        for (uint256 i = 0; i < userAddress.length; i++) {
-            ERC20(token).transfer(userAddress[i], amounts[i]);
-        }
+    // Get the list of lenders with contributions
+    function getLendersWithContribution()
+        internal
+        view
+        returns (address[] memory)
+    {
+        // Implementation to return all lenders with non-zero deposits
     }
 
-    function slash(
-        bytes32 loanId,
-        address[] memory userAddresses,
-        uint256[] memory amounts
-    ) public onlyOwner {
-        Loan storage loanDetails = loans[loanId];
-        loanDetails.slashed = true;
-
-        uint256 totalAmount = 0;
-        for (uint256 i = 0; i < amounts.length; i++) {
-            totalAmount += amounts[i];
-        }
-
-        // Path for swapping tokens (static values here, should be parameterized)
-        address[] memory path;
-        path[0] = 0xb669dC8cC6D044307Ba45366C0c836eC3c7e31AA;
-        path[1] = 0x8d0c9d1c17aE5e40ffF9bE350f57840E9E66Cd93;
-
-        // Perform swap
-        IRouter(router).swapExactETHForTokens(
-            totalAmount,
-            path,
-            address(this),
-            block.timestamp + 10
-        );
-
-        // Transfer amounts to the user addresses
-        for (uint256 i = 0; i < userAddresses.length; i++) {
-            ERC20(token).transfer(userAddresses[i], amounts[i]);
-        }
+    // Mock exchange rate fetcher for demonstration
+    function getExchangeRate() internal pure returns (uint256) {
+        return 2000 * 10 ** 6; // 2000 USDC per WETH (example rate, replace with actual implementation)
     }
 }
