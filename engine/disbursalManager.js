@@ -121,6 +121,10 @@ async function processPaymentWithVariedLiquidationFactor(
     );
   });
 
+  console.debug(
+    "Lender receivable details,",
+    loan.receivable_amount_monthly_by_lenders
+  );
   // Step 3: Update the receivable amount monthly by lenders
   loan.receivable_amount_monthly_by_lenders = loan.lenders_capital_invested.map(
     (lender) => {

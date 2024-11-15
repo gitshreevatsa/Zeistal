@@ -164,6 +164,4 @@ contract LendingPool {
     {
         // Implementation to return all lenders with non-zero deposits
     }
-
-
 }

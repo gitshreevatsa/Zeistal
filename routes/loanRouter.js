@@ -13,6 +13,6 @@ router.post("/", isLoggedIn, createLoan);
 router.get("/", isLoggedIn, getLoans);
 router.get("/:id", getLoanById);
 router.patch("/:id", updateLoan);
-router.get("/check/liquidity",isLoggedIn, initialDetails);
+router.get("/check/liquidity", isLoggedIn, initialDetails);
 
 module.exports = router;
