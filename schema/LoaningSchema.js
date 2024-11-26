@@ -10,12 +10,13 @@ const BorrowingSchema = new mongoose.Schema({
 
   remaining_amount: { type: Number, required: true },
   collateral: { type: Number, required: true }, // USDC or USDT
-  asset: { type: String, required: true }, // BTC
-  asset_borrowed: { type: Number, required: true }, // amount of BTC borrowed
-  asset_remaining: { type: Number, required: true }, // amount of BTC remaining
-  asset_price: { type: Number, required: true }, // price of BTC loan opened at
-  asset_released_per_month: { type: Number, required: true }, // amount of BTC released per month
+  asset: { type: String, required: true }, // BTC, ETH
+  asset_borrowed: { type: Number, required: true }, // amount of BTC, ETH borrowed
+  asset_remaining: { type: Number, required: true }, // amount of BTC, ETH remaining
+  asset_price: { type: Number, required: true }, // price of BTC, ETH loan opened at
+  asset_released_per_month: { type: Number, required: true }, // amount of BTC, ETH released per month
 
+  chain_id : { type: Number, required: true },
   interest_rate: { type: Number, required: true },
   loan_duration: { type: Number, required: true },
   number_of_monthly_installments: { type: Number, required: true },

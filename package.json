@@ -13,11 +13,13 @@
     "@openzeppelin/contracts": "^5.1.0",
     "axios": "^1.7.7",
     "body-parser": "^1.20.3",
+    "cron": "^3.2.1",
     "dotenv": "^16.4.5",
     "ethers": "^6.13.4",
     "express": "^4.21.1",
     "jsonwebtoken": "^9.0.2",
     "mongodb": "^6.10.0",
-    "mongoose": "^8.8.0"
+    "mongoose": "^8.8.0",
+    "node-cron": "^3.0.3"
   }
 }

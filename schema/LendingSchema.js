@@ -16,6 +16,8 @@ const LendingSchema = new mongoose.Schema({
   avaialble_amount: { type: Number, required: true },
   loans: [{ type: mongoose.Types.ObjectId, required: true, ref: "Loan" }],
   openedOn: { type: Date, required: true },
+  transaction_hash: { type: String },
+  chain_id: { type: Number, required: true },
 });
 
 const Lend = mongoose.model("Lend", LendingSchema);

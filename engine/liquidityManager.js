@@ -15,10 +15,11 @@ async function manageLiquidity(loanId) {
     const lendings = await Lend.find({
       lending_duration: { $gte: loan.loan_duration },
       user_id: { $ne: loan.user_id },
+      chain_id: loan.chain_id,
     });
 
     // Total amount required for the loan
-    let remainingLoanAmount = loan.loan_amount;
+    let remainingLoanAmount = loan.collateral;
     let totalInterest = loan.interest;
     const monthlyInterestRate =
       totalInterest / loan.number_of_monthly_installments; // Monthly interest rate as a percentage

@@ -23,6 +23,7 @@ const PaymentSchema = new mongoose.Schema({
     lend_id: { type: mongoose.Types.ObjectId, ref: "User" },
     amount: { type: Number },
   },
+  transaction_hash: { type: String },
 });
 
 const Payment = mongoose.model("Payment", PaymentSchema);

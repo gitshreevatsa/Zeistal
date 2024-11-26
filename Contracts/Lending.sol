@@ -13,20 +13,52 @@ interface IUniswap {
     ) external returns (uint256[] memory amounts);
 }
 
+interface IStorkVerifier {
+    function verifyStorkSignatureV1(
+        address storkPubKey,
+        bytes32 id,
+        uint256 recvTime,
+        int256 quantizedValue,
+        bytes32 publisherMerkleRoot,
+        bytes32 valueComputeAlgHash,
+        uint256 value,
+        bytes32 r,
+        bytes32 s,
+        uint8 v
+    ) external returns (bool);
+}
+
+// USDC address : 0xb669dC8cC6D044307Ba45366C0c836eC3c7e31AA
+// WBTC Address : 0x8d0c9d1c17aE5e40ffF9bE350f57840E9E66Cd93
+// Uniswap Router : 0xb45670f668EE53E62b5F170B5B1d3C6701C8d03A
+
 contract LendingPool {
-    address public usdcToken;
-    address public wbtctoken;
-    address public uniswapRouter;
+    address public usdcToken = 0xb669dC8cC6D044307Ba45366C0c836eC3c7e31AA;
+    address public wbtctoken = 0x8d0c9d1c17aE5e40ffF9bE350f57840E9E66Cd93;
+    address public uniswapRouter = 0xb45670f668EE53E62b5F170B5B1d3C6701C8d03A;
+    address public storkVerifier = 0xacC0a0cF13571d30B4b8637996F5D6D774d4fd62;
     uint256 public poolBalance;
-    uint256 public exchangeRate; // USDC per WETH
+    uint256 public exchangeRate; // USDC per BTC
 
     struct Lender {
         uint256 deposit;
         uint256 totalContributed;
-        uint256 wethEquivalent; // WETH amount they’re entitled to receive
+        uint256 btcEquivalent; // BTC amount they’re entitled to receive
+    }
+
+    struct Deposit {
+        bytes32 id;
+        address lender;
+        uint256 amount;
+        uint256 duration;
+        uint256 interest;
+        uint256 depositBalance;
+        uint256 receieveAmount;
+        uint256 price;
     }
 
     struct Loan {
+        bytes32 id;
         uint256 amount;
         uint256 collateral;
         address borrower;
@@ -38,130 +70,109 @@ contract LendingPool {
 
     mapping(address => Lender) public lenders;
     mapping(uint256 => Loan) public loans;
+    mapping(address => uint256) public assetPrice;
     uint256 public loanCount;
 
-    constructor(
-        address _usdcToken,
-        address _wbtctoken,
-        address _uniswapRouter
-    ) {
-        usdcToken = _usdcToken;
-        wbtctoken = _wbtctoken;
-        uniswapRouter = _uniswapRouter;
+    address public owner;
+
+    constructor() {
+        owner = msg.sender;
+    }
+
+    receive() external payable {}
+
+    event DepositEvent(
+        bytes32 id,
+        address indexed lender,
+        uint256 amount,
+        uint256 duration,
+        uint256 interest,
+        uint256 depositBalance
+    );
+
+    function setPrice(
+        address asset,
+        address storkPubKey,
+        bytes32 id,
+        uint256 recvTime,
+        int256 quantizedValue,
+        bytes32 publisherMerkleRoot,
+        bytes32 valueComputeAlgHash,
+        uint256 value,
+        bytes32 r,
+        bytes32 s,
+        uint8 v
+    ) public {
+        bool result = IStorkVerifier(storkVerifier).verifyStorkSignatureV1(
+            storkPubKey,
+            id,
+            recvTime,
+            quantizedValue,
+            publisherMerkleRoot,
+            valueComputeAlgHash,
+            value,
+            r,
+            s,
+            v
+        );
+
+        if (result) {
+            exchangeRate = value;
+            assetPrice[asset] = value;
+        }
+    }
+
+    function getPrice(address asset) external view returns (uint256) {
+        return assetPrice[asset];
     }
 
     // Deposit function for lenders
-    function deposit(uint256 amount) external {
-        // Assume approval has been given by the lender
+    function deposit(
+        address asset,
+        uint256 amount,
+        uint256 interest,
+        uint256 duration
+    ) external returns (Deposit memory) {
+        // Get Price of Asset
+        uint256 price = assetPrice[asset];
+        // Transfer USDC from lender to contract
         ERC20(usdcToken).transferFrom(msg.sender, address(this), amount);
+        // Create a unique ID for the deposit
+        bytes32 id = keccak256(abi.encodePacked(msg.sender, block.timestamp));
+        // Update the lender’s deposit balance
         lenders[msg.sender].deposit += amount;
+        // Update pool's balance
         poolBalance += amount;
-    }
-
-    // Open a new loan with USDC collateral
-    function openLoan(uint256 amount, uint256 collateral) external {
-        require(poolBalance >= (amount * 80) / 100, "Not enough liquidity");
-
-        // Store the USDC to WETH exchange rate when loan is opened
-        exchangeRate = 5*amount; // As 20% of the loan amount is bought by borrower and protocol supports only 1BTC trades ATM
-
-        Loan storage loan = loans[loanCount];
-        loan.amount = amount;
-        loan.collateral = collateral;
-        loan.remainingCollateral = collateral;
-        loan.borrower = msg.sender;
-        loan.isActive = true;
-
-        // Allocate lenders to this loan
-        allocateLendersToLoan(loanCount, amount);
-
-        // Swap 80% of the loan amount (in USDC) for WETH and send to borrower
-        uint256 usdcToSwap = (amount * 80) / 100;
-        swapUSDCForWETH(usdcToSwap, msg.sender);
-
-        loanCount++;
-    }
-
-    // Allocate funds from lenders to the loan
-    function allocateLendersToLoan(uint256 loanId, uint256 amount) internal {
-        Loan storage loan = loans[loanId];
-        uint256 totalAllocated = 0;
-        address[] memory lenderAddresses = getLendersWithContribution();
-
-        for (uint256 i = 0; i < lenderAddresses.length; i++) {
-            address lenderAddr = lenderAddresses[i];
-            Lender storage lender = lenders[lenderAddr];
-            uint256 contribution = (amount * lender.deposit) / poolBalance;
-
-            if (totalAllocated + contribution > amount) {
-                contribution = amount - totalAllocated;
-            }
-
-            lender.deposit -= contribution;
-            lender.totalContributed += contribution;
-
-            // Calculate WETH equivalent for lender’s contribution
-            uint256 wethEquivalent = (contribution * 1 ether) / exchangeRate;
-            lender.wethEquivalent += wethEquivalent;
-
-            loan.lenders.push(lenderAddr);
-            loan.amounts.push(contribution);
-
-            totalAllocated += contribution;
-            if (totalAllocated >= amount) break;
-        }
-
-        poolBalance -= totalAllocated;
-    }
-
-    // Process a payment towards a loan
-    function processPayment(uint256 loanId, uint256 amount) external {
-        Loan storage loan = loans[loanId];
-        require(loan.isActive, "Loan is not active");
-
-        ERC20(usdcToken).transferFrom(msg.sender, address(this), amount);
-
-        // Distribute payment to lenders
-        for (uint256 i = 0; i < loan.lenders.length; i++) {
-            address lenderAddr = loan.lenders[i];
-            uint256 lenderContribution = loan.amounts[i];
-            uint256 lenderShare = (amount * lenderContribution) / loan.amount;
-
-            lenders[lenderAddr].deposit += lenderShare;
-        }
-
-        // Reduce the loan's remaining collateral as payment is made
-        loan.remainingCollateral -= (loan.collateral * amount) / loan.amount;
-
-        // If loan is fully paid, deactivate it
-        if (loan.remainingCollateral == 0) {
-            loan.isActive = false;
-        }
-    }
-
-    // Swap function (USDC -> WETH) via Uniswap
-    function swapUSDCForWETH(uint256 amount, address to) internal {
-        ERC20(usdcToken).approve(uniswapRouter, amount);
-
-        address[] memory path;
-        path[0] = usdcToken;
-        path[1] = wbtctoken;
-
-        IUniswap(uniswapRouter).swapExactTokensForTokens(
+        // Calculate the amount the lender will receive after the duration
+        uint256 receieveAmount = amount + (amount * interest) / 100;
+        // Create a deposit object
+        Deposit memory depositAction = Deposit(
+            id,
+            msg.sender,
             amount,
-            1, // Min amount out, could use slippage tolerance
-            path,
-            to,
-            block.timestamp
+            duration,
+            interest,
+            poolBalance,
+            receieveAmount,
+            price
         );
-    }
+        // Emit a deposit event
+        emit DepositEvent(
+            id,
+            msg.sender,
+            amount,
+            duration,
+            interest,
+            poolBalance
+        );
 
-    // Get the list of lenders with contributions
-    function getLendersWithContribution()
-        internal
-        view
-        returns (address[] memory)
-    {
-        // Implementation to return all lenders with non-zero deposits
+        return depositAction;
     }
 }
+
+// Create a loan function: Iterate over the lenders whose deposits are available for the given duration and calculate how much collateral they can provide and
+// then create a loan object by calculating each lenders contribution ratio
+// and the net receivables based on the interest rate of loan and the total receivables per lender with total principal, total interest and total amount and the liquidation factor based on collateral
+
+// A function to give available liquidity for a given time duration
+

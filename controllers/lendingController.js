@@ -18,11 +18,17 @@ const createLending = async (req, res) => {
     await lending.save();
     const user = await User.findById(req.user._id);
     user.lendings.push(lending._id);
-    user.totalCapitalLent += req.body.lending_amount_approved;
+    user.totalCapitalLent = {
+      chain_id: req.body.chain_id,
+      asset: req.body.asset,
+      amount: req.body.lending_amount_approved,
+    };
     await user.save();
+
+    const deposit = await Lend.findById(lending._id).populate("user_id loans");
     return res.json({
       message: "Lending created successfully",
-      deposit: lending,
+      deposit: deposit,
     });
   } catch (error) {
     return res.status(500).json({ error: error.message });

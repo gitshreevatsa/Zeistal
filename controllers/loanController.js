@@ -31,7 +31,11 @@ const createLoan = async (req, res) => {
 
     const user = await User.findById(req.user._id);
     user.loans.push(loan._id);
-    user.totalCapitalBorrowed += req.body.loan_amount;
+    user.totalCapitalBorrowed = {
+      chain_id: req.body.chain_id,
+      amount: req.body.collateral,
+      asset: req.body.asset,
+    };
 
     // run match engine
     const matchingEngine = await manageLiquidity(loan._id);
@@ -53,7 +57,12 @@ const createLoan = async (req, res) => {
     // things needed for contract : loan Id, lending details arrays, loanduration, interest rate, loan amount
     await loan.save();
     await user.save();
-    return res.json({ message: "Loan created successfully", lendingDetails, loan });
+    const createdLoan = await Loan.findById(loan._id).populate("lends user_id");
+    return res.json({
+      message: "Loan created successfully",
+      lendingDetails,
+      loan: createdLoan,
+    });
   } catch (error) {
     console.log(error);
     return res.status(500).json({ error: error.message });
@@ -102,7 +111,11 @@ const initialDetails = async (req, res) => {
     if (totalAvailableLiquidity < amount) {
       return res.json({ message: "Insufficient liquidity", success: false });
     }
-    return res.json({ message: "Liquidity available", success: true , totalAvailableLiquidity});
+    return res.json({
+      message: "Liquidity available",
+      success: true,
+      totalAvailableLiquidity,
+    });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
