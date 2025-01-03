@@ -11,16 +11,20 @@ const paymentRouter = require("./routes/paymentRouter");
 const lendingRouter = require("./routes/lendRouter");
 
 const { seralizeUser } = require("./controllers/authController");
+const { recordDeposit } = require("./Listeners/deposit");
+const { recordLoan } = require("./Listeners/loan");
+const { recordPayment } = require("./Listeners/payment");
 
 const app = express();
 connectDB();
 
 // schedule cron for every 5 seconds
-// cron.schedule("*/5 * * * * *", async () => {
-//   await setOraclePrice();
-// });
-
-setOraclePrice();
+cron.schedule("*/5 * * * * *", async () => {
+  await setOraclePrice();
+  await recordDeposit();
+  await recordLoan();
+  await recordPayment();
+});
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
